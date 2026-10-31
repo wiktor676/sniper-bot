@@ -1,17 +1,13 @@
 {
-  "name": "bot-project",
+  "name": "sniper-bot",
   "version": "1.0.0",
-  "description": "Simple bot project",
+  "description": "Multi-Platform Tip Rain Monitor",
   "main": "run.js",
   "scripts": {
-    "start": "node run.js",
-    "dev": "node --watch run.js"
+    "start": "node run.js"
   },
   "dependencies": {
-    "discord.js": "^14.14.1"
-  },
-  "keywords": [
-    "bot"
-  ],
-  "license": "MIT"
+    "axios": "^1.6.0",
+    "discord.js": "^14.14.0"
+  }
 }
