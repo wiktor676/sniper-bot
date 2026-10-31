@@ -1,0 +1,17 @@
+{
+  "name": "bot-project",
+  "version": "1.0.0",
+  "description": "Simple bot project",
+  "main": "run.js",
+  "scripts": {
+    "start": "node run.js",
+    "dev": "node --watch run.js"
+  },
+  "dependencies": {
+    "discord.js": "^14.14.1"
+  },
+  "keywords": [
+    "bot"
+  ],
+  "license": "MIT"
+}
