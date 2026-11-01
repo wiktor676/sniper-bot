@@ -7,7 +7,9 @@
     "start": "node run.js"
   },
   "dependencies": {
+    "@discordjs/ws": "^9.1.0",
     "axios": "^1.6.0",
-    "discord.js": "^14.14.0"
+    "discord.js": "^14.14.0",
+    "dotenv": "^16.4.5"
   }
 }
