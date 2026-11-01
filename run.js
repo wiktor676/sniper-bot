@@ -706,4 +706,4 @@ async function runCheck(config, channelId, platformName, key) {
     } catch (err) {}
 }
 
-client.login('process.env.DISCORD_TOKEN');
+client.login(process.env.DISCORD_TOKEN);
