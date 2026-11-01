@@ -5,14 +5,16 @@ const {
     ActionRowBuilder, 
     ButtonBuilder, 
     ButtonStyle, 
-    EmbedBuilder 
+    EmbedBuilder,
+    ChannelType,
+    PermissionsBitField
 } = require('discord.js');
 const http = require('http');
 
-// Prosty serwer HTTP do utrzymywania działania
+// Simple HTTP server to keep the bot alive on PM2 / UptimeRobot / Render
 const server = http.createServer((req, res) => {
     res.writeHead(200, { 'Content-Type': 'text/plain' });
-    res.end('Multi-Platform Tip Rain Monitor is running!\n');
+    res.end('Multi-Platform Tip Rain Monitor & Ticket Bot is running 24/7!\n');
 });
 server.listen(8080, () => {
     console.log('[SYS] HTTP server listening on port 8080');
@@ -31,15 +33,23 @@ const CHANNELS = {
     DONUTDROP_ALERT: '1565799962934251653',
     DONUTDSURGE_ALERT: '1565800116663623710',
     DONUTSTAKE_ALERT: '1565879909870735430',
-    ROLE_SELECT: '1565826447833170122'
+    ROLE_SELECT: '1565826447833170122',
+    TICKET_PANEL: '1566427140138868786' // Channel for the ticket panel
+};
+
+const CATEGORIES = {
+    TICKET_CATEGORY: '1566194828545364059' // Category where new tickets are created
 };
 
 const ROLES = {
     DONUTDROP_PING: '1565836541597851748',
     DONUTSURGE_PING: '1565836388128133342',
     DONUTSTAKE_PING: '1565882472607129801',
-    AUTO_ROLE: '1565837276322463806'
+    AUTO_ROLE: '1565837276322463806',
+    GIVEAWAY_WINNER: '1566429754159013919'
 };
+
+const activeGiveaways = new Map();
 
 const DONUTDROP_CONFIG = {
     url: 'https://donutdrop.net/api/rain',
@@ -215,10 +225,51 @@ async function sendRoleSelectPanel() {
     }
 }
 
+async function sendTicketPanel() {
+    try {
+        const ticketChannel = await client.channels.fetch(CHANNELS.TICKET_PANEL);
+        if (!ticketChannel) return;
+
+        const messages = await ticketChannel.messages.fetch({ limit: 10 });
+        const existingPanel = messages.find(m => m.author.id === client.user.id && m.components.length > 0);
+
+        const embed = new EmbedBuilder()
+            .setColor(0x00AE86)
+            .setTitle('🎫 **Ticket System - Help & Giveaway**')
+            .setDescription('Need help, have a **question/suggestion regarding Rain**, or want to resolve something related to a **Giveaway**?\n\nClick the appropriate button below to open a private ticket!')
+            .addFields(
+                { name: '🌧️ Rain Ticket', value: 'Questions, suggestions, or reports regarding Rain features.', inline: false },
+                { name: '🎉 Giveaway Ticket', value: 'Matters regarding giveaway rewards and claims.', inline: false }
+            );
+
+        const row = new ActionRowBuilder().addComponents(
+            new ButtonBuilder()
+                .setCustomId('create_ticket_rain')
+                .setLabel('Ticket: Rain (Questions/Suggestions)')
+                .setStyle(ButtonStyle.Primary)
+                .setEmoji('🌧️'),
+            new ButtonBuilder()
+                .setCustomId('create_ticket_giveaway')
+                .setLabel('Ticket: Giveaway')
+                .setStyle(ButtonStyle.Success)
+                .setEmoji('🎉')
+        );
+
+        if (existingPanel) {
+            await existingPanel.edit({ embeds: [embed], components: [row] });
+        } else {
+            await ticketChannel.send({ embeds: [embed], components: [row] });
+        }
+    } catch (err) {
+        console.error('Failed to setup ticket panel:', err.message);
+    }
+}
+
 client.once('clientReady', async () => {
     console.log(`Multi-Platform Rain Monitor: Wiktor is ready`);
     
     await sendRoleSelectPanel();
+    await sendTicketPanel();
 
     const CHECK_INTERVAL = 10 * 1000;
     
@@ -231,37 +282,139 @@ client.once('clientReady', async () => {
     setInterval(() => runCheck(DONUTSTAKE_CONFIG, CHANNELS.DONUTSTAKE_ALERT, 'Donutstake', 'donutstake'), CHECK_INTERVAL);
 });
 
+function parseDuration(durationStr) {
+    const match = durationStr.match(/^(\d+)([dhms])$/);
+    if (!match) return null;
+    const value = parseInt(match[1]);
+    const unit = match[2];
+
+    switch (unit) {
+        case 'd': return value * 24 * 60 * 60 * 1000;
+        case 'h': return value * 60 * 60 * 1000;
+        case 'm': return value * 60 * 1000;
+        case 's': return value * 1000;
+        default: return null;
+    }
+}
+
 client.on('interactionCreate', async (interaction) => {
-    if (!interaction.isButton()) return;
+    if (interaction.isButton()) {
+        if (interaction.customId === 'create_ticket_rain' || interaction.customId === 'create_ticket_giveaway') {
+            const ticketType = interaction.customId === 'create_ticket_rain' ? 'rain' : 'giveaway';
+            const guild = interaction.guild;
+            const user = interaction.user;
 
-    const roleMap = {
-        'role_donutdrop': ROLES.DONUTDROP_PING,
-        'role_donutsurge': ROLES.DONUTSURGE_PING,
-        'role_donutstake': ROLES.DONUTSTAKE_PING
-    };
+            try {
+                const existingChannel = guild.channels.cache.find(c => c.name === `ticket-${ticketType}-${user.username.toLowerCase().replace(/[^a-z0-9]/g, '')}`);
+                if (existingChannel) {
+                    return await interaction.reply({ content: `❌ You already have an open ticket: <#${existingChannel.id}>`, flags: 64 });
+                }
 
-    const targetRoleId = roleMap[interaction.customId];
-    if (!targetRoleId) return;
+                await interaction.deferReply({ flags: 64 });
 
-    try {
-        const member = interaction.member;
-        const role = interaction.guild.roles.cache.get(targetRoleId);
+                const ticketChannel = await guild.channels.create({
+                    name: `ticket-${ticketType}-${user.username}`,
+                    type: ChannelType.GuildText,
+                    parent: CATEGORIES.TICKET_CATEGORY,
+                    permissionOverwrites: [
+                        {
+                            id: guild.roles.everyone.id,
+                            deny: [PermissionsBitField.Flags.ViewChannel]
+                        },
+                        {
+                            id: user.id,
+                            allow: [PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages, PermissionsBitField.Flags.ReadMessageHistory]
+                        },
+                        {
+                            id: client.user.id,
+                            allow: [PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages, PermissionsBitField.Flags.ManageChannels]
+                        }
+                    ]
+                });
 
-        if (!role) {
-            return await interaction.reply({ content: '❌ Target role does not exist on this server.', flags: 64 });
+                const embed = new EmbedBuilder()
+                    .setColor(ticketType === 'rain' ? 0x0099FF : 0x57F287)
+                    .setTitle(`🎫 Ticket: ${ticketType === 'rain' ? 'Rain (Questions / Suggestions)' : 'Giveaway'}`)
+                    .setDescription(`Welcome <@${user.id}>!\nPlease describe your issue, question, or suggestion in detail. Staff will be with you shortly.\n\nClick the button below to close this ticket.`);
+
+                const closeRow = new ActionRowBuilder().addComponents(
+                    new ButtonBuilder()
+                        .setCustomId('close_ticket')
+                        .setLabel('Close Ticket')
+                        .setStyle(ButtonStyle.Danger)
+                        .setEmoji('🔒')
+                );
+
+                await ticketChannel.send({ content: `<@${user.id}>`, embeds: [embed], components: [closeRow] });
+                await interaction.editReply({ content: `✅ Your ticket has been created: <#${ticketChannel.id}>` });
+
+            } catch (err) {
+                console.error('Error creating ticket:', err);
+                if (interaction.deferred) {
+                    await interaction.editReply({ content: '❌ An error occurred while creating the ticket.' });
+                }
+            }
+            return;
         }
 
-        if (member.roles.cache.has(targetRoleId)) {
-            await member.roles.remove(role);
-            await interaction.reply({ content: `🔴 Removed the **${role.name}** role.`, flags: 64 });
-        } else {
-            await member.roles.add(role);
-            await interaction.reply({ content: `🟢 Added the **${role.name}** role!`, flags: 64 });
+        if (interaction.customId === 'close_ticket') {
+            try {
+                await interaction.reply({ content: '🔒 Closing ticket in 3 seconds...' });
+                setTimeout(async () => {
+                    try {
+                        await interaction.channel.delete();
+                    } catch (e) {}
+                }, 3000);
+            } catch (err) {}
+            return;
         }
-    } catch (err) {
-        console.error('Error toggling role:', err.message);
-        if (!interaction.replied) {
-            await interaction.reply({ content: '❌ Failed to update your role permissions.', flags: 64 });
+
+        if (interaction.customId.startsWith('join_giveaway_')) {
+            const giveawayId = interaction.customId.replace('join_giveaway_', '');
+            const giveaway = activeGiveaways.get(giveawayId);
+
+            if (!giveaway) {
+                return await interaction.reply({ content: '❌ This giveaway has already ended or does not exist.', flags: 64 });
+            }
+
+            if (giveaway.participants.has(interaction.user.id)) {
+                giveaway.participants.delete(interaction.user.id);
+                return await interaction.reply({ content: '🔴 You have left this giveaway.', flags: 64 });
+            } else {
+                giveaway.participants.add(interaction.user.id);
+                return await interaction.reply({ content: '🟢 Successfully joined the giveaway! Good luck!', flags: 64 });
+            }
+        }
+
+        const roleMap = {
+            'role_donutdrop': ROLES.DONUTDROP_PING,
+            'role_donutsurge': ROLES.DONUTSURGE_PING,
+            'role_donutstake': ROLES.DONUTSTAKE_PING
+        };
+
+        const targetRoleId = roleMap[interaction.customId];
+        if (!targetRoleId) return;
+
+        try {
+            const member = interaction.member;
+            const role = interaction.guild.roles.cache.get(targetRoleId);
+
+            if (!role) {
+                return await interaction.reply({ content: '❌ Target role does not exist on this server.', flags: 64 });
+            }
+
+            if (member.roles.cache.has(targetRoleId)) {
+                await member.roles.remove(role);
+                await interaction.reply({ content: `🔴 Removed the **${role.name}** role.`, flags: 64 });
+            } else {
+                await member.roles.add(role);
+                await interaction.reply({ content: `🟢 Added the **${role.name}** role!`, flags: 64 });
+            }
+        } catch (err) {
+            console.error('Error toggling role:', err.message);
+            if (!interaction.replied) {
+                await interaction.reply({ content: '❌ Failed to update role permissions.', flags: 64 });
+            }
         }
     }
 });
@@ -277,15 +430,16 @@ client.on('guildMemberAdd', async (member) => {
 
 client.on('messageCreate', async (message) => {
     if (message.author.id === client.user.id) return;
-    const content = message.content.trim().toLowerCase();
+    const content = message.content.trim();
+    const lowerContent = content.toLowerCase();
 
-    if (content === '!lock') {
+    if (lowerContent === '!lock') {
         try {
             await message.delete();
             await message.channel.permissionOverwrites.edit(message.guild.roles.everyone, {
                 SendMessages: false
             });
-            const lockMsg = await message.channel.send(`🔒 **Channel has been locked.** Nobody can type here.`);
+            const lockMsg = await message.channel.send(`🔒 **Channel has been locked.** No one can type here.`);
             setTimeout(async () => { try { await lockMsg.delete(); } catch (e) {} }, 10000);
         } catch (err) {
             console.error('Error locking channel:', err.message);
@@ -293,7 +447,180 @@ client.on('messageCreate', async (message) => {
         return;
     }
 
-    if (content === '!rain donutstake') {
+    if (lowerContent.startsWith('!purge')) {
+        try {
+            if (!message.member.permissions.has('ManageMessages')) {
+                const reply = await message.channel.send('❌ You do not have permissions to manage messages (`ManageMessages`).');
+                setTimeout(async () => { try { await reply.delete(); } catch (e) {} }, 5000);
+                return;
+            }
+
+            const args = content.split(/\s+/);
+            const target = args[1]?.toLowerCase();
+
+            if (!target) {
+                const reply = await message.channel.send('⚠️ Usage: `!purge [1-100]` or `!purge all`.');
+                setTimeout(async () => { try { await reply.delete(); } catch (e) {} }, 5000);
+                return;
+            }
+
+            if (target === 'all') {
+                await message.delete().catch(() => {});
+                let totalDeleted = 0;
+                let fetched;
+
+                do {
+                    fetched = await message.channel.messages.fetch({ limit: 100 });
+                    if (fetched.size > 0) {
+                        const deleted = await message.channel.bulkDelete(fetched, true);
+                        totalDeleted += deleted.size;
+                    }
+                } while (fetched.size >= 2);
+
+                const successMsg = await message.channel.send(`🧹 Successfully deleted **${totalDeleted}** messages.`);
+                setTimeout(async () => { try { await successMsg.delete(); } catch (e) {} }, 4000);
+                return;
+            }
+
+            const deleteCount = parseInt(target);
+
+            if (isNaN(deleteCount) || deleteCount < 1 || deleteCount > 100) {
+                const reply = await message.channel.send('⚠️ Please provide a valid message count between **1 and 100** or type `!purge all`.');
+                setTimeout(async () => { try { await reply.delete(); } catch (e) {} }, 5000);
+                return;
+            }
+
+            await message.channel.bulkDelete(deleteCount + 1, true);
+            const successMsg = await message.channel.send(`🧹 Successfully deleted **${deleteCount}** messages.`);
+            setTimeout(async () => { try { await successMsg.delete(); } catch (e) {} }, 4000);
+
+        } catch (err) {
+            console.error('Error during purge:', err.message);
+            const errReply = await message.channel.send('❌ An error occurred while deleting messages.');
+            setTimeout(async () => { try { await errReply.delete(); } catch (e) {} }, 5000);
+        }
+        return;
+    }
+
+    if (lowerContent.startsWith('!giveaway')) {
+        try {
+            if (!message.member.permissions.has('Administrator')) {
+                const reply = await message.channel.send('❌ You do not have administrator permissions to create giveaways.');
+                setTimeout(async () => { try { await reply.delete(); } catch (e) {} }, 5000);
+                return;
+            }
+
+            const args = content.split(/\s+/);
+            if (args.length < 3) {
+                const reply = await message.channel.send('⚠️ Usage: `!giveaway [duration] [prize]` (e.g. `!giveaway 1d 100m`).');
+                setTimeout(async () => { try { await reply.delete(); } catch (e) {} }, 5000);
+                return;
+            }
+
+            const durationMs = parseDuration(args[1]);
+            if (!durationMs) {
+                const reply = await message.channel.send('⚠️ Invalid time format! Use e.g. `1d` (days), `2h` (hours), `30m` (minutes).');
+                setTimeout(async () => { try { await reply.delete(); } catch (e) {} }, 5000);
+                return;
+            }
+
+            const prize = args.slice(2).join(' ');
+            await message.delete().catch(() => {});
+
+            const giveawayId = Date.now().toString();
+            const participants = new Set();
+            activeGiveaways.set(giveawayId, { participants, prize });
+
+            const endsAt = Date.now() + durationMs;
+            
+            // Poprawiony embed: większy, czytelny, bez "MEGA", z @everyone na początku
+            const embed = new EmbedBuilder()
+                .setColor(0xFFD700)
+                .setTitle('🎉 ══════════════════ 🎉\n          GIVEAWAY\n🎉 ══════════════════ 🎉')
+                .setDescription(`> 🎁 **Prize:** \`${prize}\`\n> 👥 **Participants:** \`0\`\n> ⏰ **Ends:** <t:${Math.floor(endsAt / 1000)}:R>\n\n*Click the button below to secure your entry and win amazing rewards!*`)
+                .addFields(
+                    { name: '📌 Rules / Info', value: '• Click **Join Giveaway** to participate.\n• Click again to leave if you change your mind.', inline: false }
+                )
+                .setFooter({ text: `Hosted by ${message.author.tag}` });
+
+            const row = new ActionRowBuilder().addComponents(
+                new ButtonBuilder()
+                    .setCustomId(`join_giveaway_${giveawayId}`)
+                    .setLabel('Join Giveaway')
+                    .setStyle(ButtonStyle.Success)
+                    .setEmoji('🎁')
+            );
+
+            // Automatyczny ping @everyone przy każdym giveawayu
+            const giveawayMsg = await message.channel.send({ content: '@everyone', embeds: [embed], components: [row] });
+
+            const participantUpdater = setInterval(async () => {
+                if (!activeGiveaways.has(giveawayId)) {
+                    clearInterval(participantUpdater);
+                    return;
+                }
+                try {
+                    const currentGiveaway = activeGiveaways.get(giveawayId);
+                    if (!currentGiveaway) return;
+                    const updatedEmbed = new EmbedBuilder()
+                        .setColor(0xFFD700)
+                        .setTitle('🎉 ══════════════════ 🎉\n          GIVEAWAY\n🎉 ══════════════════ 🎉')
+                        .setDescription(`> 🎁 **Prize:** \`${prize}\`\n> 👥 **Participants:** \`${currentGiveaway.participants.size}\`\n> ⏰ **Ends:** <t:${Math.floor(endsAt / 1000)}:R>\n\n*Click the button below to secure your entry and win amazing rewards!*`)
+                        .addFields(
+                            { name: '📌 Rules / Info', value: '• Click **Join Giveaway** to participate.\n• Click again to leave if you change your mind.', inline: false }
+                        )
+                        .setFooter({ text: `Hosted by ${message.author.tag}` });
+                    await giveawayMsg.edit({ embeds: [updatedEmbed] }).catch(() => {});
+                } catch (e) {}
+            }, 5000);
+
+            setTimeout(async () => {
+                clearInterval(participantUpdater);
+                activeGiveaways.delete(giveawayId);
+
+                try {
+                    const fetchedMsg = await message.channel.messages.fetch(giveawayMsg.id).catch(() => null);
+                    if (!fetchedMsg) return;
+
+                    if (participants.size === 0) {
+                        const endedEmbed = new EmbedBuilder()
+                            .setColor(0xED4245)
+                            .setTitle('🎉 ══════════════════ 🎉\n     GIVEAWAY ENDED\n🎉 ══════════════════ 🎉')
+                            .setDescription(`> 🎁 **Prize:** \`${prize}\`\n> 👥 **Total Participants:** \`0\`\n\n❌ **No participants – no winner selected.**`);
+                        return await fetchedMsg.edit({ content: '', embeds: [endedEmbed], components: [] });
+                    }
+
+                    const participantsArray = Array.from(participants);
+                    const winnerId = participantsArray[Math.floor(Math.random() * participantsArray.length)];
+                    const winnerUser = await message.guild.members.fetch(winnerId).catch(() => null);
+
+                    const endedEmbed = new EmbedBuilder()
+                        .setColor(0x57F287)
+                        .setTitle('🎉 ══════════════════ 🎉\n     GIVEAWAY ENDED\n🎉 ══════════════════ 🎉')
+                        .setDescription(`> 🎁 **Prize:** \`${prize}\`\n> 👥 **Total Participants:** \`${participants.size}\`\n\n🏆 **Winner:** <@${winnerId}>\n\n🎉 *Congratulations! Please open a Giveaway Ticket in <#${CHANNELS.TICKET_PANEL}> to claim your reward.*`);
+
+                    // Edycja wiadomości: usunięcie pingu @everyone z treści i ustawienie finalnego embeda ze wzmianką zwycięzcy
+                    await fetchedMsg.edit({ content: `🎉 Congratulations <@${winnerId}>! You won **${prize}**!`, embeds: [endedEmbed], components: [] });
+
+                    if (winnerUser) {
+                        const roleToAssign = message.guild.roles.cache.get(ROLES.GIVEAWAY_WINNER);
+                        if (roleToAssign) {
+                            await winnerUser.roles.add(roleToAssign).catch(err => console.error('Failed to assign winner role:', err));
+                        }
+                    }
+
+                } catch (err) {
+                    console.error('Error ending giveaway:', err);
+                }
+            }, durationMs);
+
+        } catch (err) {
+            console.error('Giveaway command error:', err);
+        }
+        return;
+    }
+
+    if (lowerContent === '!rain donutstake') {
         try {
             await message.delete();
 
@@ -378,4 +705,5 @@ async function runCheck(config, channelId, platformName, key) {
 
     } catch (err) {}
 }
-client.login(process.env.DISCORD_TOKEN);
+
+client.login('process.env.DISCORD_TOKEN');
