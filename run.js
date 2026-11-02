@@ -11,7 +11,7 @@ const {
 } = require('discord.js');
 const http = require('http');
 
-// Simple HTTP server to keep the bot alive on PM2 / UptimeRobot / Render
+// Prosty serwer HTTP utrzymujący bota przy życiu na Render / UptimeRobot
 const server = http.createServer((req, res) => {
     res.writeHead(200, { 'Content-Type': 'text/plain' });
     res.end('Multi-Platform Tip Rain Monitor & Ticket Bot is running 24/7!\n');
@@ -34,11 +34,11 @@ const CHANNELS = {
     DONUTDSURGE_ALERT: '1565800116663623710',
     DONUTSTAKE_ALERT: '1565879909870735430',
     ROLE_SELECT: '1565826447833170122',
-    TICKET_PANEL: '1566427140138868786' // Channel for the ticket panel
+    TICKET_PANEL: '1566427140138868786'
 };
 
 const CATEGORIES = {
-    TICKET_CATEGORY: '1566194828545364059' // Category where new tickets are created
+    TICKET_CATEGORY: '1566194828545364059'
 };
 
 const ROLES = {
@@ -146,15 +146,21 @@ function formatDonutstakeData(data) {
 }
 
 function formatStandardRainData(rainObj, data, platformName, roleId) {
-    const rawPot = rainObj.potRaw || rainObj.pool || data.amount || rainObj.amount || 0;
-    const pot = rawPot > 1000 ? (rawPot / 1000000).toFixed(1) + 'M Money' : rawPot + ' Money';
+    const rawPot = rainObj.potRaw || rainObj.pool || data.amount || rainObj.amount || rainObj.pot || 0;
+    const pot = rawPot > 1000000 ? (rawPot / 1000000000).toFixed(1) + 'B Money' : (rawPot > 1000 ? (rawPot / 1000000).toFixed(1) + 'M Money' : rawPot + ' Money');
     
     let timeString = 'Unknown';
     let timeLeftString = '';
 
     const closesAtTime = rainObj.closesAt || rainObj.endsAt || data.endsIn || rainObj.expiresAt;
     if (closesAtTime) {
-        const closeDate = new Date(closesAtTime);
+        let closeDate;
+        if (typeof closesAtTime === 'number' && closesAtTime < 86400000) {
+            closeDate = new Date(Date.now() + closesAtTime);
+        } else {
+            closeDate = new Date(closesAtTime);
+        }
+
         if (!isNaN(closeDate.getTime())) {
             timeString = closeDate.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'UTC' });
             
@@ -299,7 +305,6 @@ function parseDuration(durationStr) {
 
 client.on('interactionCreate', async (interaction) => {
     if (interaction.isButton()) {
-        // Ticket creation handling
         if (interaction.customId === 'create_ticket_rain' || interaction.customId === 'create_ticket_giveaway') {
             const ticketType = interaction.customId === 'create_ticket_rain' ? 'rain' : 'giveaway';
             const guild = interaction.guild;
@@ -358,7 +363,6 @@ client.on('interactionCreate', async (interaction) => {
             return;
         }
 
-        // Ticket closing handling
         if (interaction.customId === 'close_ticket') {
             try {
                 await interaction.reply({ content: '🔒 Closing ticket in 3 seconds...' });
@@ -381,11 +385,33 @@ client.on('interactionCreate', async (interaction) => {
 
             if (giveaway.participants.has(interaction.user.id)) {
                 giveaway.participants.delete(interaction.user.id);
-                return await interaction.reply({ content: '🔴 You have left this giveaway.', flags: 64 });
+                await interaction.reply({ content: '🔴 You have left this giveaway.', flags: 64 });
             } else {
                 giveaway.participants.add(interaction.user.id);
-                return await interaction.reply({ content: '🟢 Successfully joined the giveaway! Good luck!', flags: 64 });
+                await interaction.reply({ content: '🟢 Successfully joined the giveaway! Good luck!', flags: 64 });
             }
+
+            try {
+                const channel = await client.channels.fetch(giveaway.channelId);
+                const msg = await channel.messages.fetch(giveaway.messageId);
+                
+                const updatedEmbed = new EmbedBuilder()
+                    .setColor(0xFFD700)
+                    .setTitle('🎉 ══════════════════ 🎉\n         GIVEAWAY\n🎉 ══════════════════ 🎉')
+                    .setDescription(
+                        `> 🎁 **Prize:** \`${giveaway.prize}\`\n` +
+                        `> 👥 **Participants:** \`${giveaway.participants.size}\`\n` +
+                        `> ⏰ **Ends:** <t:${Math.floor(giveaway.endsAt / 1000)}:R>\n\n` +
+                        `*Click the button below to secure your entry and win amazing rewards!*`
+                    )
+                    .addFields(
+                        { name: '📌 Rules / Info', value: '• Click **Join Giveaway** to participate.\n• Click again to leave if you change your mind.', inline: false }
+                    )
+                    .setFooter({ text: `Hosted by ${giveaway.hostTag}` });
+
+                await msg.edit({ embeds: [updatedEmbed] });
+            } catch (e) {}
+            return;
         }
 
         const roleMap = {
@@ -531,14 +557,16 @@ client.on('messageCreate', async (message) => {
 
             const giveawayId = Date.now().toString();
             const participants = new Set();
-            activeGiveaways.set(giveawayId, { participants, prize });
-
             const endsAt = Date.now() + durationMs;
+
             const embed = new EmbedBuilder()
                 .setColor(0xFFD700)
-                .setTitle('🎉 **GIVEAWAY** 🎉')
-                .setDescription(`Prize: **${prize}**\n\nClick the button below to enter!\n\n⏰ **Ends:** <t:${Math.floor(endsAt / 1000)}:R>`)
-                .setFooter({ text: `Created by ${message.author.tag}` });
+                .setTitle('🎉 ══════════════════ 🎉\n         GIVEAWAY\n🎉 ══════════════════ 🎉')
+                .setDescription(`> 🎁 **Prize:** \`${prize}\`\n> 👥 **Participants:** \`0\`\n> ⏰ **Ends:** <t:${Math.floor(endsAt / 1000)}:R>\n\n*Click the button below to secure your entry and win amazing rewards!*`)
+                .addFields(
+                    { name: '📌 Rules / Info', value: '• Click **Join Giveaway** to participate.\n• Click again to leave if you change your mind.', inline: false }
+                )
+                .setFooter({ text: `Hosted by ${message.author.tag}` });
 
             const row = new ActionRowBuilder().addComponents(
                 new ButtonBuilder()
@@ -548,7 +576,16 @@ client.on('messageCreate', async (message) => {
                     .setEmoji('🎁')
             );
 
-            const giveawayMsg = await message.channel.send({ embeds: [embed], components: [row] });
+            const giveawayMsg = await message.channel.send({ content: '@everyone', embeds: [embed], components: [row] });
+
+            activeGiveaways.set(giveawayId, { 
+                participants, 
+                prize, 
+                channelId: message.channel.id, 
+                messageId: giveawayMsg.id, 
+                endsAt, 
+                hostTag: message.author.tag 
+            });
 
             setTimeout(async () => {
                 activeGiveaways.delete(giveawayId);
@@ -560,9 +597,9 @@ client.on('messageCreate', async (message) => {
                     if (participants.size === 0) {
                         const endedEmbed = new EmbedBuilder()
                             .setColor(0xED4245)
-                            .setTitle('🎉 **GIVEAWAY ENDED** 🎉')
-                            .setDescription(`Prize: **${prize}**\n\n❌ No participants – no winner selected.`);
-                        return await fetchedMsg.edit({ embeds: [endedEmbed], components: [] });
+                            .setTitle('🎉 ══════════════════ 🎉\n     GIVEAWAY ENDED\n🎉 ══════════════════ 🎉')
+                            .setDescription(`> 🎁 **Prize:** \`${prize}\`\n> 👥 **Total Participants:** \`0\`\n\n❌ **No participants – no winner selected.**`);
+                        return await fetchedMsg.edit({ content: '', embeds: [endedEmbed], components: [] });
                     }
 
                     const participantsArray = Array.from(participants);
@@ -571,11 +608,12 @@ client.on('messageCreate', async (message) => {
 
                     const endedEmbed = new EmbedBuilder()
                         .setColor(0x57F287)
-                        .setTitle('🎉 **GIVEAWAY ENDED** 🎉')
-                        .setDescription(`Prize: **${prize}**\n\n🏆 **Winner:** <@${winnerId}>`);
+                        .setTitle('🎉 ══════════════════ 🎉\n     GIVEAWAY ENDED\n🎉 ══════════════════ 🎉')
+                        .setDescription(`> 🎁 **Prize:** \`${prize}\`\n> 👥 **Total Participants:** \`${participants.size}\`\n\n🏆 **Winner:** <@${winnerId}>`);
 
-                    await fetchedMsg.edit({ embeds: [endedEmbed], components: [] });
-                    await message.channel.send(`Oh, <@${winnerId}> won the giveaway! Congratulations! 🎉\nPlease make a ticket in <#${CHANNELS.TICKET_PANEL}>!`);
+                    await fetchedMsg.edit({ content: '', embeds: [endedEmbed], components: [] });
+                    
+                    await message.channel.send(`YOU WON <@${winnerId}> CONGRATULATIONS MAKE A TICKET IN https://discord.com/channels/1554592547093876847/1566427140138868786`);
 
                     if (winnerUser) {
                         const roleToAssign = message.guild.roles.cache.get(ROLES.GIVEAWAY_WINNER);
@@ -629,7 +667,7 @@ async function runCheck(config, channelId, platformName, key) {
             if (isRainActive) newMsgText = formatDonutstakeData(data);
         } else {
             const rainObj = data.rain || data;
-            isRainActive = data.enabled || rainObj?.active || rainObj?.phase === 'RAINING' || rainObj?.status === 'RAINING' || data.status === 'active' || (rainObj?.potRaw && rainObj.potRaw > 0) || (rainObj?.pool && rainObj.pool > 0);
+            isRainActive = data.enabled || rainObj?.active || rainObj?.phase === 'RAINING' || rainObj?.status === 'RAINING' || data.status === 'active' || (rainObj?.potRaw && rainObj.potRaw > 0) || (rainObj?.pool && rainObj.pool > 0) || (rainObj?.pot && rainObj.pot > 0);
             if (isRainActive) newMsgText = formatStandardRainData(rainObj, data, platformName, ROLES.DONUTDROP_PING);
         }
 
