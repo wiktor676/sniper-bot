@@ -730,4 +730,4 @@ client.on('messageCreate', async (message) => {
     }
 });
 
-client.login(TOKEN);
+client.login((process.env.DISCORD_TOKEN);
