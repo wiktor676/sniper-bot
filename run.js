@@ -33,7 +33,6 @@ const CHANNELS = {
     DONUTDROP_ALERT: '1565799962934251653',
     DONUTDSURGE_ALERT: '1565800116663623710',
     DONUTSTAKE_ALERT: '1565879909870735430',
-    PLAYDONUT_ALERT: '1565799886748909578',
     ROLE_SELECT: '1565826447833170122',
     TICKET_PANEL: '1566427140138868786'
 };
@@ -46,7 +45,6 @@ const ROLES = {
     DONUTDROP_PING: '1565836541597851748',
     DONUTSURGE_PING: '1565836388128133342',
     DONUTSTAKE_PING: '1565882472607129801',
-    PLAYDONUT_PING: '1565836174394658856',
     AUTO_ROLE: '1565837276322463806',
     GIVEAWAY_WINNER: '1566429754159013919'
 };
@@ -82,18 +80,8 @@ const DONUTSTAKE_CONFIG = {
     }
 };
 
-const PLAYDONUT_CONFIG = {
-    url: 'https://playdonut.gg/api/rain',
-    headers: {
-        'Accept': '*/*',
-        'Cookie': 'vid=cd9f9853-097d-4659-b1bb-7e896fb75e53; sid=8cbcea10-cb3b-44fd-8f4b-47f000d62234',
-        'Referer': 'https://playdonut.gg/',
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/156.0.0.0 Safari/537.36 Edg/156.0.0.0'
-    }
-};
-
-const activeRainMessageIds = { donutdrop: null, donutsurge: null, donutstake: null, playdonut: null };
-const lastRefreshTimestamp = { donutdrop: 0, donutsurge: 0, donutstake: 0, playdonut: 0 };
+const activeRainMessageIds = { donutdrop: null, donutsurge: null, donutstake: null };
+const lastRefreshTimestamp = { donutdrop: 0, donutsurge: 0, donutstake: 0 };
 
 function formatDonutsurgeData(data) {
     const openData = data.open || data.rain || data;
@@ -157,47 +145,6 @@ function formatDonutstakeData(data) {
             `> ═════════════════════════════`;
 }
 
-function formatPlayDonutData(data, roleId) {
-    const rainObj = data.rain || data;
-    const rawPot = rainObj.potRaw || rainObj.pool || rainObj.amount || rainObj.pot || data.amount || data.pot || 0;
-    const pot = rawPot > 1000000 ? (rawPot / 1000000000).toFixed(1) + 'B Money' : (rawPot > 1000 ? (rawPot / 1000000).toFixed(1) + 'M Money' : rawPot + ' Money');
-    
-    let timeString = 'Unknown';
-    let timeLeftString = '';
-
-    const closesAtTime = rainObj.closesAt || rainObj.endsAt || rainObj.endsIn || rainObj.expiresAt || data.endsIn;
-    if (closesAtTime) {
-        let closeDate;
-        if (typeof closesAtTime === 'number' && closesAtTime < 86400000) {
-            closeDate = new Date(Date.now() + closesAtTime);
-        } else {
-            closeDate = new Date(closesAtTime);
-        }
-
-        if (!isNaN(closeDate.getTime())) {
-            timeString = closeDate.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'UTC' });
-            
-            const diffMs = closeDate - new Date();
-            if (diffMs > 0) {
-                const diffMins = Math.floor(diffMs / 60000);
-                const diffSecs = Math.floor((diffMs % 60000) / 1000);
-                timeLeftString = diffMins > 0 ? ` (${diffMins} min left)` : ` (${diffSecs}s left)`;
-            } else {
-                timeLeftString = ` (Ending now)`;
-            }
-        } else {
-            timeString = closesAtTime;
-        }
-    }
-
-    return `<@&${roleId}>\n` +
-            `> 🎁 **PLAYDONUT TIP RAIN IS ACTIVE!**\n` +
-            `> ═════════════════════════════\n` +
-            `> 💰 **Pool Amount:** \`${pot}\`\n` +
-            `> ⏳ **Ends At:** \`${timeString}\` *${timeLeftString}*\n` +
-            `> ═════════════════════════════`;
-}
-
 function formatStandardRainData(rainObj, data, platformName, roleId) {
     const rawPot = rainObj.potRaw || rainObj.pool || data.amount || rainObj.amount || rainObj.pot || 0;
     const pot = rawPot > 1000000 ? (rawPot / 1000000000).toFixed(1) + 'B Money' : (rawPot > 1000 ? (rawPot / 1000000).toFixed(1) + 'M Money' : rawPot + ' Money');
@@ -253,11 +200,10 @@ async function sendRoleSelectPanel() {
             .addFields(
                 { name: '💎 DonutDrop', value: 'Get pinged when a tip rain starts on DonutDrop.', inline: false },
                 { name: '⚡ DonutSurge', value: 'Get pinged when a tip rain starts on DonutSurge.', inline: false },
-                { name: '🌧️ DonutStake', value: 'Get pinged when a tip rain starts on DonutStake.', inline: false },
-                { name: '🍩 PlayDonut', value: 'Get pinged when a tip rain starts on PlayDonut.', inline: false }
+                { name: '🌧️ DonutStake', value: 'Get pinged when a tip rain starts on DonutStake.', inline: false }
             );
 
-        const row1 = new ActionRowBuilder().addComponents(
+        const row = new ActionRowBuilder().addComponents(
             new ButtonBuilder()
                 .setCustomId('role_donutdrop')
                 .setLabel('DonutDrop')
@@ -275,18 +221,10 @@ async function sendRoleSelectPanel() {
                 .setEmoji('🌧️')
         );
 
-        const row2 = new ActionRowBuilder().addComponents(
-            new ButtonBuilder()
-                .setCustomId('role_playdonut')
-                .setLabel('PlayDonut')
-                .setStyle(ButtonStyle.Primary)
-                .setEmoji('🍩')
-        );
-
         if (existingPanel) {
-            await existingPanel.edit({ embeds: [embed], components: [row1, row2] });
+            await existingPanel.edit({ embeds: [embed], components: [row] });
         } else {
-            await roleChannel.send({ embeds: [embed], components: [row1, row2] });
+            await roleChannel.send({ embeds: [embed], components: [row] });
         }
     } catch (err) {
         console.error('Failed to setup role select panel:', err.message);
@@ -344,13 +282,78 @@ client.once('clientReady', async () => {
     runCheck(DONUTDROP_CONFIG, CHANNELS.DONUTDROP_ALERT, 'DonutDrop', 'donutdrop');
     runCheck(DONUTDSURGE_CONFIG, CHANNELS.DONUTDSURGE_ALERT, 'Donutsurge', 'donutsurge');
     runCheck(DONUTSTAKE_CONFIG, CHANNELS.DONUTSTAKE_ALERT, 'Donutstake', 'donutstake');
-    runCheck(PLAYDONUT_CONFIG, CHANNELS.PLAYDONUT_ALERT, 'PlayDonut', 'playdonut');
 
     setInterval(() => runCheck(DONUTDROP_CONFIG, CHANNELS.DONUTDROP_ALERT, 'DonutDrop', 'donutdrop'), CHECK_INTERVAL);
     setInterval(() => runCheck(DONUTDSURGE_CONFIG, CHANNELS.DONUTDSURGE_ALERT, 'Donutsurge', 'donutsurge'), CHECK_INTERVAL);
     setInterval(() => runCheck(DONUTSTAKE_CONFIG, CHANNELS.DONUTSTAKE_ALERT, 'Donutstake', 'donutstake'), CHECK_INTERVAL);
-    setInterval(() => runCheck(PLAYDONUT_CONFIG, CHANNELS.PLAYDONUT_ALERT, 'PlayDonut', 'playdonut'), CHECK_INTERVAL);
 });
+
+async function runCheck(config, channelId, platformName, key) {
+    try {
+        const response = await axios.get(config.url, { headers: config.headers, timeout: 5000 });
+        const data = response.data;
+        
+        let isRainActive = false;
+        let newMsgText = '';
+
+        if (key === 'donutsurge') {
+            isRainActive = (data.open && data.open.id) || (data.pot && data.pot > 0) || (data.rain && data.rain.active);
+            if (isRainActive) newMsgText = formatDonutsurgeData(data);
+        } else if (key === 'donutstake') {
+            isRainActive = (data.active === true) || (data.poolAmount && data.poolAmount > 0) || (data.rainActive === true);
+            if (isRainActive) newMsgText = formatDonutstakeData(data);
+        } else {
+            const rainObj = data.rain || data;
+            isRainActive = data.enabled || rainObj?.active || rainObj?.phase === 'RAINING' || rainObj?.status === 'RAINING' || data.status === 'active' || (rainObj?.potRaw && rainObj.potRaw > 0) || (rainObj?.pool && rainObj.pool > 0) || (rainObj?.pot && rainObj.pot > 0);
+            if (isRainActive) newMsgText = formatStandardRainData(rainObj, data, platformName, ROLES.DONUTDROP_PING);
+        }
+
+        const channel = await client.channels.fetch(channelId);
+        if (!channel) return;
+
+        const now = Date.now();
+        const THIRTY_MINUTES = 30 * 60 * 1000;
+        const timeElapsedSinceRefresh = now - lastRefreshTimestamp[key];
+
+        if (!isRainActive) {
+            if (activeRainMessageIds[key]) {
+                try {
+                    const oldMsg = await channel.messages.fetch(activeRainMessageIds[key]);
+                    if (oldMsg) await oldMsg.delete();
+                } catch (e) {}
+                activeRainMessageIds[key] = null;
+            }
+            lastRefreshTimestamp[key] = 0;
+            return;
+        }
+
+        if (!activeRainMessageIds[key] || timeElapsedSinceRefresh >= THIRTY_MINUTES) {
+            if (activeRainMessageIds[key]) {
+                try {
+                    const oldMsg = await channel.messages.fetch(activeRainMessageIds[key]);
+                    if (oldMsg) await oldMsg.delete();
+                } catch (e) {}
+            }
+
+            const newMsg = await channel.send(newMsgText);
+            activeRainMessageIds[key] = newMsg.id;
+            lastRefreshTimestamp[key] = now;
+        } else {
+            try {
+                const existingMsg = await channel.messages.fetch(activeRainMessageIds[key]);
+                if (existingMsg) {
+                    await existingMsg.edit(newMsgText);
+                } else {
+                    const newMsg = await channel.send(newMsgText);
+                    activeRainMessageIds[key] = newMsg.id;
+                }
+            } catch (e) {
+                const newMsg = await channel.send(newMsgText);
+                activeRainMessageIds[key] = newMsg.id;
+            }
+        }
+    } catch (err) {}
+}
 
 function parseDuration(durationStr) {
     const match = durationStr.match(/^(\d+)([dhms])$/);
@@ -461,7 +464,7 @@ client.on('interactionCreate', async (interaction) => {
                 
                 const updatedEmbed = new EmbedBuilder()
                     .setColor(0xFFD700)
-                    .setTitle('🎉 ══════════════════ 🎉\n         GIVEAWAY\n🎉 ══════════════════ 🎉')
+                    .setTitle('🎉 ══════════════════ 🎉\n       GIVEAWAY\n🎉 ══════════════════ 🎉')
                     .setDescription(
                         `> 🎁 **Prize:** \`${giveaway.prize}\`\n` +
                         `> 👥 **Participants:** \`${giveaway.participants.size}\`\n` +
@@ -481,8 +484,7 @@ client.on('interactionCreate', async (interaction) => {
         const roleMap = {
             'role_donutdrop': ROLES.DONUTDROP_PING,
             'role_donutsurge': ROLES.DONUTSURGE_PING,
-            'role_donutstake': ROLES.DONUTSTAKE_PING,
-            'role_playdonut': ROLES.PLAYDONUT_PING
+            'role_donutstake': ROLES.DONUTSTAKE_PING
         };
 
         const targetRoleId = roleMap[interaction.customId];
@@ -605,19 +607,26 @@ client.on('messageCreate', async (message) => {
 
             const args = content.split(/\s+/);
             if (args.length < 3) {
-                const reply = await message.channel.send('⚠️ Usage: `!giveaway [duration] [prize]` (e.g. `!giveaway 1d 100m`).');
+                const reply = await message.channel.send('⚠️ Usage: `!giveaway [duration] [prize] (@user)` (e.g. `!giveaway 1d 100m`).');
                 setTimeout(async () => { try { await reply.delete(); } catch (e) {} }, 5000);
                 return;
             }
 
             const durationMs = parseDuration(args[1]);
             if (!durationMs) {
-                const reply = await message.channel.send('⚠️ Invalid time format! Use e.g. `1d` (days), `2h` (hours), `30m` (minutes).');
+                const reply = await message.channel.send('⚠️ Invalid time format! Use e.g. `1d` (days), `2h` (hours), `30m` (minutes), `30s` (seconds).');
                 setTimeout(async () => { try { await reply.delete(); } catch (e) {} }, 5000);
                 return;
             }
 
-            const prize = args.slice(2).join(' ');
+            const forcedWinnerMention = message.mentions.users.first();
+            const forcedWinnerId = forcedWinnerMention ? forcedWinnerMention.id : null;
+
+            let prize = args.slice(2).join(' ');
+            if (forcedWinnerMention) {
+                prize = prize.replace(new RegExp(`<@!?${forcedWinnerId}>`, 'g'), '').trim();
+            }
+
             await message.delete().catch(() => {});
 
             const giveawayId = Date.now().toString();
@@ -626,7 +635,7 @@ client.on('messageCreate', async (message) => {
 
             const embed = new EmbedBuilder()
                 .setColor(0xFFD700)
-                .setTitle('🎉 ══════════════════ 🎉\n         GIVEAWAY\n🎉 ══════════════════ 🎉')
+                .setTitle('🎉 ══════════════════ 🎉\n       GIVEAWAY\n🎉 ══════════════════ 🎉')
                 .setDescription(`> 🎁 **Prize:** \`${prize}\`\n> 👥 **Participants:** \`0\`\n> ⏰ **Ends:** <t:${Math.floor(endsAt / 1000)}:R>\n\n*Click the button below to secure your entry and win amazing rewards!*`)
                 .addFields(
                     { name: '📌 Rules / Info', value: '• Click **Join Giveaway** to participate.\n• Click again to leave if you change your mind.', inline: false }
@@ -659,16 +668,21 @@ client.on('messageCreate', async (message) => {
                     const fetchedMsg = await message.channel.messages.fetch(giveawayMsg.id).catch(() => null);
                     if (!fetchedMsg) return;
 
-                    if (participants.size === 0) {
-                        const endedEmbed = new EmbedBuilder()
-                            .setColor(0xED4245)
-                            .setTitle('🎉 ══════════════════ 🎉\n     GIVEAWAY ENDED\n🎉 ══════════════════ 🎉')
-                            .setDescription(`> 🎁 **Prize:** \`${prize}\`\n> 👥 **Total Participants:** \`0\`\n\n❌ **No participants – no winner selected.**`);
-                        return await fetchedMsg.edit({ content: '', embeds: [endedEmbed], components: [] });
+                    let winnerId = forcedWinnerId;
+
+                    if (!winnerId) {
+                        if (participants.size === 0) {
+                            const endedEmbed = new EmbedBuilder()
+                                .setColor(0xED4245)
+                                .setTitle('🎉 ══════════════════ 🎉\n     GIVEAWAY ENDED\n🎉 ══════════════════ 🎉')
+                                .setDescription(`> 🎁 **Prize:** \`${prize}\`\n> 👥 **Total Participants:** \`0\`\n\n❌ **No participants – no winner selected.**`);
+                            return await fetchedMsg.edit({ content: '', embeds: [endedEmbed], components: [] });
+                        }
+
+                        const participantsArray = Array.from(participants);
+                        winnerId = participantsArray[Math.floor(Math.random() * participantsArray.length)];
                     }
 
-                    const participantsArray = Array.from(participants);
-                    const winnerId = participantsArray[Math.floor(Math.random() * participantsArray.length)];
                     const winnerUser = await message.guild.members.fetch(winnerId).catch(() => null);
 
                     const endedEmbed = new EmbedBuilder()
@@ -710,85 +724,10 @@ client.on('messageCreate', async (message) => {
             setTimeout(async () => { try { await replyMsg.delete(); } catch (e) {} }, 15000);
         } catch (err) {
             const replyMsg = await message.channel.send(`⚠️ Could not reach DonutStake API right now.`);
-            setTimeout(async () => { try { await replyMsg.delete(); } catch (e) {} }, 10000);
+            setTimeout(async () => { try { await replyMsg.delete(); } catch (e) {} }, 5000);
         }
         return;
     }
 });
 
-async function runCheck(config, channelId, platformName, key) {
-    try {
-        const response = await axios.get(config.url, { headers: config.headers, timeout: 5000 });
-        const data = response.data;
-        
-        let isRainActive = false;
-        let newMsgText = '';
-
-        if (key === 'donutsurge') {
-            isRainActive = (data.open && data.open.id) || (data.pot && data.pot > 0) || (data.rain && data.rain.active);
-            if (isRainActive) newMsgText = formatDonutsurgeData(data);
-        } else if (key === 'donutstake') {
-            isRainActive = data.status === 'active' || data.status === 'raining' || data.canJoin === true || (data.poolAmount && data.poolAmount > 0);
-            if (isRainActive) newMsgText = formatDonutstakeData(data);
-        } else {
-            const rainObj = data.rain || data;
-            isRainActive = data.enabled || rainObj?.active || rainObj?.phase === 'RAINING' || rainObj?.status === 'RAINING' || data.status === 'active' || (rainObj?.potRaw && rainObj.potRaw > 0) || (rainObj?.pool && rainObj.pool > 0) || (rainObj?.pot && rainObj.pot > 0) || (data.pot && data.pot > 0) || (data.amount && data.amount > 0);
-            
-            if (isRainActive) {
-                if (key === 'playdonut') {
-                    newMsgText = formatPlayDonutData(data, ROLES.PLAYDONUT_PING);
-                } else {
-                    newMsgText = formatStandardRainData(rainObj, data, platformName, ROLES.DONUTDROP_PING);
-                }
-            }
-        }
-
-        const channel = await client.channels.fetch(channelId);
-        if (!channel) return;
-
-        const now = Date.now();
-        const THIRTY_MINUTES = 30 * 60 * 1000;
-        const timeElapsedSinceRefresh = now - lastRefreshTimestamp[key];
-
-        if (!isRainActive) {
-            if (activeRainMessageIds[key]) {
-                try {
-                    const oldMsg = await channel.messages.fetch(activeRainMessageIds[key]);
-                    if (oldMsg) await oldMsg.delete();
-                } catch (e) {}
-                activeRainMessageIds[key] = null;
-            }
-            lastRefreshTimestamp[key] = 0;
-            return;
-        }
-
-        if (!activeRainMessageIds[key] || timeElapsedSinceRefresh >= THIRTY_MINUTES) {
-            if (activeRainMessageIds[key]) {
-                try {
-                    const oldMsg = await channel.messages.fetch(activeRainMessageIds[key]);
-                    if (oldMsg) await oldMsg.delete();
-                } catch (e) {}
-            }
-
-            const newMsg = await channel.send(newMsgText);
-            activeRainMessageIds[key] = newMsg.id;
-            lastRefreshTimestamp[key] = now;
-        } else {
-            try {
-                const existingMsg = await channel.messages.fetch(activeRainMessageIds[key]);
-                if (existingMsg) {
-                    await existingMsg.edit(newMsgText);
-                } else {
-                    const newMsg = await channel.send(newMsgText);
-                    activeRainMessageIds[key] = newMsg.id;
-                }
-            } catch (e) {
-                const newMsg = await channel.send(newMsgText);
-                activeRainMessageIds[key] = newMsg.id;
-            }
-        }
-
-    } catch (err) {}
-}
-
-client.login('process.env.DISCORD_TOKEN');
+client.login(TOKEN);
